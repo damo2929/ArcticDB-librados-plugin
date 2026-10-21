@@ -21,6 +21,7 @@ from arcticdb.adapters.rados_library_adapter import add_rados_library_to_env, pa
 RADOS_TEST_URI_ENV = "ARCTICDB_RADOS_TEST_URI"
 
 
+# Returns the URI with prefix appended to its namespace prefix, so each fixture is isolated inside the pool.
 def with_namespace_prefix(uri: str, prefix: str) -> str:
     match = re.match(r"(?P<head>rados://[^/?]+)(?:/(?P<prefix>[^?]*))?(?P<query>\?.*)?$", uri)
     assert match, f"Invalid RADOS URI {uri}"
@@ -29,12 +30,14 @@ def with_namespace_prefix(uri: str, prefix: str) -> str:
     return f"{match['head']}/{full_prefix}{match['query'] or ''}"
 
 
+# One isolated namespace prefix in the test pool; implements the upstream StorageFixture contract.
 class RadosNamespaceFixture(StorageFixture):
     def __init__(self, base_uri: str, prefix: str):
         super().__init__()
         self.arctic_uri = with_namespace_prefix(base_uri, prefix)
         self._parsed = parse_rados_uri(self.arctic_uri)
 
+    # Config for version-store fixtures (NativeVersionStore) created by the upstream store factories.
     def create_test_cfg(self, lib_name: str) -> EnvironmentConfigsMap:
         cfg = EnvironmentConfigsMap()
         add_rados_library_to_env(cfg, lib_name, Defaults.ENV, self._parsed)

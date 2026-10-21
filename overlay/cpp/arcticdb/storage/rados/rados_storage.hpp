@@ -30,12 +30,15 @@ class RadosStorage final : public Storage, public AsyncStorage {
   public:
     using Config = arcticdb::proto::rados_storage::Config;
 
+    // Defaults used when the config leaves the field at 0.
     static constexpr uint32_t DEFAULT_INDEX_SHARDS = 8;
     static constexpr uint64_t DEFAULT_CHUNK_SIZE = 64ULL << 20;
+    // Largest batch ArcticDB will pass to do_remove(span); AsyncStore splits bigger deletes.
     static constexpr size_t DELETE_BATCH_SIZE = 1000;
 
     RadosStorage(const LibraryPath& lib, OpenMode mode, const Config& conf);
 
+    // Storage hooks: see the definitions in rados_storage.cpp for what each one does on RADOS.
     std::string name() const final;
 
     [[nodiscard]] bool has_async_api() const final;
@@ -113,13 +116,19 @@ class RadosStorage final : public Storage, public AsyncStorage {
     );
     void for_each_object(PoolKind pool, const std::function<void(std::vector<std::string>&&)>& visitor);
 
+    // librados (or mock) client bound to this library's namespace.
     std::unique_ptr<RadosClientInterface> client_;
+    // RADOS namespace holding all of this library's objects.
     std::string namespace_;
+    // Number of omap index shards per key type. Must be the same for every client of a library (persisted config).
     uint32_t index_shards_;
+    // Segments larger than this are split across objects.
     uint64_t chunk_size_;
+    // Which key types are tracked in the omap index.
     std::bitset<static_cast<size_t>(KeyType::UNDEFINED) + 1> indexed_;
 };
 
+// Convenience for tests and tooling: a VariantStorage holding a RADOS config for the given pool.
 inline arcticdb::proto::storage::VariantStorage pack_config(const std::string& pool, bool use_mock = false) {
     arcticdb::proto::storage::VariantStorage output;
     arcticdb::proto::rados_storage::Config cfg;

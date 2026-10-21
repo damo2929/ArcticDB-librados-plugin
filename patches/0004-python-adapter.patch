@@ -1,5 +1,5 @@
 diff --git a/python/arcticdb/arctic.py b/python/arcticdb/arctic.py
-index a26ecb4..4af2897 100644
+index a26ecb4..be077f5 100644
 --- a/python/arcticdb/arctic.py
 +++ b/python/arcticdb/arctic.py
 @@ -30,6 +30,7 @@ from arcticdb.adapters.azure_library_adapter import AzureLibraryAdapter
@@ -14,7 +14,7 @@ index a26ecb4..4af2897 100644
          AzureLibraryAdapter,
          MongoLibraryAdapter,
          InMemoryLibraryAdapter,
-+        RadosLibraryAdapter,
++        RadosLibraryAdapter,  # rados:// URIs: native Ceph RADOS backend
      ]
  
      # This is a hack to allow the tests to access the libs_instances_from_arctic list

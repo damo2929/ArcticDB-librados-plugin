@@ -84,7 +84,7 @@ EOF
     ceph "${conf[@]}" osd pool create arcticdb-meta 16 16 replicated
     ceph "${conf[@]}" osd pool application enable arcticdb arcticdb
     ceph "${conf[@]}" osd pool application enable arcticdb-meta arcticdb
-    ceph "${conf[@]}" auth get-or-create client.arcticdb mon 'profile r' \
+    ceph "${conf[@]}" auth get-or-create client.arcticdb mon 'allow r' \
         osd 'allow rwx pool=arcticdb, allow rwx pool=arcticdb-meta' -o "$d/client.arcticdb.keyring"
 
     for _ in $(seq 60); do

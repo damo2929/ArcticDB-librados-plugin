@@ -10,10 +10,10 @@ cd "$SRC"
 
 declare -A PATCH_GROUPS=(
     [0001-build-glue]="cpp/arcticdb/CMakeLists.txt cpp/proto/arcticc/pb2/proto/CMakeLists.txt"
-    [0002-engine-registration]="cpp/arcticdb/entity/protobufs.hpp cpp/arcticdb/storage/storage_factory.cpp cpp/arcticdb/util/error_code.hpp"
+    [0002-engine-registration]="cpp/arcticdb/toolbox/query_stats.hpp cpp/arcticdb/toolbox/query_stats.cpp cpp/arcticdb/entity/protobufs.hpp cpp/arcticdb/storage/storage_factory.cpp cpp/arcticdb/util/error_code.hpp"
     [0003-overrides-and-bindings]="cpp/arcticdb/storage/storage_override.hpp cpp/arcticdb/storage/library_manager.cpp cpp/arcticdb/storage/python_bindings.cpp"
     [0004-python-adapter]="python/arcticdb/arctic.py"
-    [0005-upstream-test-suites]="cpp/arcticdb/util/test/test_utils.hpp cpp/arcticdb/storage/test/test_storage_operations.cpp cpp/arcticdb/storage/test/test_storage_exceptions.cpp python/tests/conftest.py python/tests/util/mark.py"
+    [0005-upstream-test-suites]="pyproject.toml cpp/arcticdb/util/test/test_utils.hpp cpp/arcticdb/storage/test/test_storage_operations.cpp cpp/arcticdb/storage/test/test_storage_exceptions.cpp python/tests/conftest.py python/tests/util/mark.py python/tests/unit/arcticdb/test_column_stats_optimisation.py python/tests/unit/arcticdb/test_column_stats_isin.py python/tests/unit/arcticdb/test_column_stats_creation.py"
 )
 
 grouped=()

@@ -48,6 +48,7 @@ class RadosClientImpl final : public RadosClientInterface {
     [[nodiscard]] std::string describe(PoolKind pool) const override;
 
   private:
+    // IoCtx for a pool kind; META falls back to the data pool when no meta_pool is configured.
     librados::IoCtx& ioctx(PoolKind pool) { return pool == PoolKind::META && distinct_pools_ ? meta_ : data_; }
 
     std::shared_ptr<librados::Rados> cluster_;

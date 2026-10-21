@@ -9,6 +9,7 @@
 
 namespace arcticdb::storage::apy {
 
+// Exposes RadosOverride to Python (used by the rados:// adapter) and whether the librados client was compiled in.
 inline void register_rados_bindings(pybind11::module& storage) {
     namespace py = pybind11;
     py::class_<RadosOverride>(storage, "RadosOverride")

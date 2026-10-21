@@ -41,10 +41,12 @@ from arcticdb.version_store._store import NativeVersionStore
 from arcticdb.version_store.helper import _add_lib_desc_to_env, get_storage_for_lib_name
 from arcticdb_ext.storage import CONFIG_LIBRARY_NAME, RadosOverride, StorageOverride
 
+# URI options split by whether they are persisted with the library (layout) or only apply to this client (connection).
 _CONNECTION_OPTIONS = {"conf", "client_id", "keyring", "cluster", "op_timeout"}
 _LAYOUT_OPTIONS = {"meta_pool", "index_shards", "unindexed", "chunk_size"}
 
 
+# Parsed form of a rados:// URI; field names mirror rados_storage.proto Config.
 @dataclass
 class ParsedRadosUri:
     pool: str
@@ -61,6 +63,7 @@ class ParsedRadosUri:
     chunk_size: int = 0
 
 
+# Parses and validates a rados:// URI. Raises UserInputException for malformed URIs and unknown options.
 def parse_rados_uri(uri: str) -> ParsedRadosUri:
     match = re.match(r"rados://(?P<pool>[^/?]+)(?:/(?P<prefix>[^?]*))?(?:\?(?P<query>.*))?$", uri)
     if not match:
@@ -98,6 +101,7 @@ def parse_rados_uri(uri: str) -> ParsedRadosUri:
     return parsed
 
 
+# Builds the protobuf Config. with_connection=False leaves out client-specific settings (what gets persisted).
 def get_rados_proto(parsed: ParsedRadosUri, with_connection: bool) -> RadosConfig:
     cfg = RadosConfig()
     cfg.pool = parsed.pool
@@ -116,6 +120,7 @@ def get_rados_proto(parsed: ParsedRadosUri, with_connection: bool) -> RadosConfi
     return cfg
 
 
+# Adds a RADOS-backed library to an EnvironmentConfigsMap, like helper.add_*_library_to_env for other backends.
 def add_rados_library_to_env(cfg, lib_name, env_name, parsed: ParsedRadosUri, description=None, with_connection=True):
     env = cfg.env_by_id[env_name]
     sid, storage = get_storage_for_lib_name(lib_name, env)
@@ -143,6 +148,7 @@ class RadosLibraryAdapter(ArcticLibraryAdapter):
         p = self._parsed
         return f"rados(pool={p.pool}, meta_pool={p.meta_pool or p.pool}, namespace_prefix={p.namespace_prefix!r})"
 
+    # The library that stores all other libraries' configs, kept in the same pool under its own namespace.
     @property
     def config_library(self):
         env_cfg = EnvironmentConfigsMap()
@@ -152,9 +158,11 @@ class RadosLibraryAdapter(ArcticLibraryAdapter):
         )
         return lib._library
 
+    # Config for a new library created through this Arctic instance.
     def add_library_to_env(self, env_cfg: EnvironmentConfigsMap, name: str):
         add_rados_library_to_env(env_cfg, name, _DEFAULT_ENV, self._parsed)
 
+    # Builds a StorageOverride carrying this client's connection settings, or empty ones (parsed=None) for masking.
     def _override(self, parsed: Optional[ParsedRadosUri]) -> StorageOverride:
         rados_override = RadosOverride()
         if parsed is not None:
@@ -168,8 +176,10 @@ class RadosLibraryAdapter(ArcticLibraryAdapter):
         storage_override.set_rados_override(rados_override)
         return storage_override
 
+    # Applied when opening a library: connection settings come from this client's URI, not from storage.
     def get_storage_override(self) -> StorageOverride:
         return self._override(self._parsed)
 
+    # Applied before saving a library config: strips connection settings (notably the keyring path).
     def get_masking_override(self) -> StorageOverride:
         return self._override(None)

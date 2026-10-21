@@ -23,6 +23,8 @@ struct AioState {
     folly::Promise<T> promise;
     librados::AioCompletion* completion = nullptr;
 
+    // librados completion callback (runs on the librados finisher thread): takes ownership of the state, releases
+    // the completion and fulfils the promise. Must not block.
     static void on_complete(librados::completion_t, void* arg) {
         std::unique_ptr<AioState> self(static_cast<AioState*>(arg));
         const int rc = self->completion->get_return_value();
@@ -35,12 +37,16 @@ struct AioState {
     }
 };
 
+// State for ops whose only result is the return code (writes, removes, omap updates).
+// keepalive/bl hold the write payload until librados has sent it.
 struct RcState final : AioState<RadosErrc> {
     RadosErrc result(int rc) override { return rc; }
     std::shared_ptr<void> keepalive;
     librados::bufferlist bl;
 };
 
+// Submits a read or write op asynchronously and returns a future for its result. Ownership of the state moves to
+// the completion callback once librados has accepted the op.
 template<typename State, typename Op>
 auto submit(librados::IoCtx& ioctx, const std::string& oid, std::unique_ptr<State> state, Op& op) {
     auto future = state->promise.getFuture();
@@ -70,6 +76,7 @@ librados::bufferlist static_bufferlist(const uint8_t* data, size_t size) {
 
 } // namespace
 
+// Opens IoCtxs for the data pool and (if different) the meta pool, both bound to the library's namespace.
 RadosClientImpl::RadosClientImpl(
         const ConnectionParams& params, const std::string& pool, const std::string& meta_pool,
         const std::string& rados_namespace
@@ -90,11 +97,14 @@ RadosClientImpl::RadosClientImpl(
         open(meta_pool_, meta_);
 }
 
+// "<pool>/<namespace>" for error messages and key paths.
 std::string RadosClientImpl::describe(PoolKind pool) const {
     return fmt::format("{}/{}", pool == PoolKind::META ? meta_pool_ : pool_, namespace_);
 }
 
+// Reads a whole object and its xattrs in a single round trip.
 folly::Future<RadosReadResult> RadosClientImpl::read(PoolKind pool, const std::string& oid) {
+    // Output slots for the compound read op; filled in by librados before the callback runs.
     struct ReadState final : AioState<RadosReadResult> {
         std::shared_ptr<librados::bufferlist> bl = std::make_shared<librados::bufferlist>();
         std::map<std::string, librados::bufferlist> xattrs;
@@ -125,6 +135,8 @@ folly::Future<RadosReadResult> RadosClientImpl::read(PoolKind pool, const std::s
     return submit(ioctx(pool), oid, std::move(state), op);
 }
 
+// Writes a whole object (write_full) from caller memory without copying, optionally guarded by an exclusive create
+// or an existence assertion, and sets any xattrs, all in one atomic OSD op.
 folly::Future<RadosErrc> RadosClientImpl::write(
         PoolKind pool, const std::string& oid, RadosWriteBuffer buffer, WriteMode mode
 ) {
@@ -132,6 +144,7 @@ folly::Future<RadosErrc> RadosClientImpl::write(
     state->keepalive = std::move(buffer.keepalive);
     state->bl = static_bufferlist(buffer.data, buffer.size);
 
+    // Optional guard first: create(true) fails with -EEXIST, assert_exists with -ENOENT, and nothing is written.
     librados::ObjectWriteOperation op;
     switch (mode) {
     case WriteMode::EXCLUSIVE:
@@ -152,6 +165,7 @@ folly::Future<RadosErrc> RadosClientImpl::write(
     return submit(ioctx(pool), oid, std::move(state), op);
 }
 
+// Returns -ENOENT if the object is missing, otherwise 0 and (optionally) its size.
 folly::Future<RadosErrc> RadosClientImpl::stat(PoolKind pool, const std::string& oid, uint64_t* size) {
     struct StatState final : AioState<RadosErrc> {
         uint64_t size = 0;
@@ -170,12 +184,14 @@ folly::Future<RadosErrc> RadosClientImpl::stat(PoolKind pool, const std::string&
     return submit(ioctx(pool), oid, std::move(state), op);
 }
 
+// Deletes an object; -ENOENT if it doesn't exist.
 folly::Future<RadosErrc> RadosClientImpl::remove(PoolKind pool, const std::string& oid) {
     librados::ObjectWriteOperation op;
     op.remove();
     return submit(ioctx(pool), oid, std::make_unique<RcState>(), op);
 }
 
+// Sets omap entries on an index shard object, creating the object if needed.
 folly::Future<RadosErrc> RadosClientImpl::omap_set(
         PoolKind pool, const std::string& oid, std::map<std::string, std::string> entries
 ) {
@@ -191,6 +207,7 @@ folly::Future<RadosErrc> RadosClientImpl::omap_set(
     return submit(ioctx(pool), oid, std::make_unique<RcState>(), op);
 }
 
+// Removes omap entries from an index shard object; -ENOENT if the shard doesn't exist.
 folly::Future<RadosErrc> RadosClientImpl::omap_rm(PoolKind pool, const std::string& oid, std::vector<std::string> keys) {
     librados::ObjectWriteOperation op;
     op.assert_exists(); // don't create empty shard objects just to remove nothing from them
@@ -198,6 +215,7 @@ folly::Future<RadosErrc> RadosClientImpl::omap_rm(PoolKind pool, const std::stri
     return submit(ioctx(pool), oid, std::make_unique<RcState>(), op);
 }
 
+// Reads up to max_entries omap entries after start_after whose keys start with filter_prefix.
 folly::Future<OmapPage> RadosClientImpl::omap_list(
         PoolKind pool, const std::string& oid, const std::string& start_after, const std::string& filter_prefix,
         uint64_t max_entries
@@ -225,9 +243,12 @@ folly::Future<OmapPage> RadosClientImpl::omap_list(
     return submit(ioctx(pool), oid, std::move(state), op);
 }
 
+// Lists one page of objects in slice `slice` of `num_slices` of this namespace. The cursor is the ObjectCursor
+// serialized with to_str(), so the caller can page without holding librados types.
 ListPage RadosClientImpl::list_objects(
         PoolKind pool, size_t slice, size_t num_slices, const std::optional<std::string>& cursor, size_t max
 ) {
+    // Slice bounds are deterministic for a given pool layout, so they are recomputed for every page.
     auto& ctx = ioctx(pool);
     librados::ObjectCursor slice_start, slice_end;
     ctx.object_list_slice(ctx.object_list_begin(), ctx.object_list_end(), slice, num_slices, &slice_start, &slice_end);
@@ -246,6 +267,7 @@ ListPage RadosClientImpl::list_objects(
     page.names.reserve(items.size());
     for (auto& item : items)
         page.names.push_back(std::move(item.oid));
+    // Only hand back a cursor if this slice has more objects.
     if (!(next == slice_end) && !ctx.object_list_is_end(next))
         page.cursor = next.to_str();
     return page;

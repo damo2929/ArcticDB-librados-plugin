@@ -16,6 +16,7 @@
 
 namespace arcticdb::storage {
 
+// Runtime (non-persisted) RADOS connection settings, taken from the Arctic URI.
 class RadosOverride {
     std::string cluster_name_;
     std::string client_id_;
@@ -43,6 +44,8 @@ class RadosOverride {
     [[nodiscard]] uint32_t op_timeout_s() const { return op_timeout_s_; }
     void set_op_timeout_s(uint32_t v) { op_timeout_s_ = v; }
 
+    // Called by LibraryManager when a library is opened: copies this client's connection settings into the stored
+    // config. With a default-constructed override (the masking override) it blanks them before the config is saved.
     void modify_storage_config(arcticdb::proto::storage::VariantStorage& storage, bool /*override_https*/) const {
         if (storage.config().Is<arcticdb::proto::rados_storage::Config>()) {
             arcticdb::proto::rados_storage::Config rados_storage;

@@ -15,6 +15,8 @@ BUILD="$ROOT/build/ArcticDB/cpp/out/$PRESET-build"
 case "${1:-}" in
 cpp)
     filter="${2:-*GenericStorageTest*:*TestStorageOperations*:*Rados*}"
+    # Upstream tests create LMDB databases relative to the working directory, so run them in a scratch dir.
+    mkdir -p "$ROOT/build/test-run" && cd "$ROOT/build/test-run"
     exec "$BUILD/arcticdb/test_unit_arcticdb" --gtest_filter="$filter"
     ;;
 py)
@@ -25,9 +27,12 @@ py)
         python setup.py protoc --build-lib python
     fi
     eval "$("$ROOT/scripts/minicluster.sh" env)"
+    # Disable upstream's local simulated backends (mem, lmdb, moto S3, azurite, mongo, ...) so the parametrised
+    # suites run only the rados parameter.
+    export ARCTICDB_LOCAL_STORAGE_TESTS_ENABLED=0
     export PYTHONPATH="$ROOT/build/ArcticDB/python"
     cd python
-    [[ $# -gt 0 ]] || set -- tests/integration/arcticdb/test_arctic.py -k rados
+    [[ $# -gt 0 ]] || set -- tests/integration/arcticdb/test_arctic.py
     exec python -m pytest -p no:cacheprovider "$@"
     ;;
 *)

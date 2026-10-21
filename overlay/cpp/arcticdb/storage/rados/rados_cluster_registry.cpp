@@ -15,6 +15,7 @@
 
 namespace arcticdb::storage::rados {
 
+// Key identifying a distinct connection; libraries with identical connection settings share one Rados handle.
 std::string ConnectionParams::cache_key() const {
     std::string key = fmt::format("{}\x1f{}\x1f{}\x1f{}\x1f{}", cluster_name, client_id, conf_path, keyring, op_timeout_s);
     for (const auto& [k, v] : conf_overrides)
@@ -24,6 +25,7 @@ std::string ConnectionParams::cache_key() const {
 
 namespace {
 
+// Process-wide map of connected cluster handles, plus the pid they were created in (to detect fork()).
 struct Registry {
     std::mutex mutex;
     pid_t pid = ::getpid();
@@ -36,6 +38,7 @@ Registry& registry() {
     return *r;
 }
 
+// Raises a descriptive error if a librados setup call failed.
 void check_rc(int rc, std::string_view what, const ConnectionParams& params) {
     if (rc < 0) {
         util::raise_rte(
@@ -49,6 +52,7 @@ void check_rc(int rc, std::string_view what, const ConnectionParams& params) {
     }
 }
 
+// Creates and connects a Rados handle: client name, conf file, CEPH_ARGS/env, keyring, timeouts, then user overrides.
 std::shared_ptr<librados::Rados> connect(const ConnectionParams& params) {
     auto cluster = std::make_shared<librados::Rados>();
     const auto cluster_name = params.cluster_name.empty() ? std::string{"ceph"} : params.cluster_name;
@@ -64,13 +68,16 @@ std::shared_ptr<librados::Rados> connect(const ConnectionParams& params) {
     // CEPH_ARGS etc. still apply, as with every other Ceph client.
     cluster->conf_parse_env(nullptr);
 
+    // Explicit keyring path (from the URI) wins over ceph.conf.
     if (!params.keyring.empty())
         check_rc(cluster->conf_set("keyring", params.keyring.c_str()), "conf_set(keyring)", params);
+    // Fail OSD and mon ops after op_timeout_s instead of waiting forever (librados default).
     if (params.op_timeout_s != 0) {
         const auto timeout = std::to_string(params.op_timeout_s);
         check_rc(cluster->conf_set("rados_osd_op_timeout", timeout.c_str()), "conf_set(rados_osd_op_timeout)", params);
         check_rc(cluster->conf_set("rados_mon_op_timeout", timeout.c_str()), "conf_set(rados_mon_op_timeout)", params);
     }
+    // Arbitrary librados options from the URI (conf.<option>=<value>), e.g. objecter throttles.
     for (const auto& [k, v] : params.conf_overrides)
         check_rc(cluster->conf_set(k.c_str(), v.c_str()), fmt::format("conf_set({})", k), params);
 
@@ -81,6 +88,7 @@ std::shared_ptr<librados::Rados> connect(const ConnectionParams& params) {
 
 } // namespace
 
+// Returns the shared handle for these params, connecting on first use and reconnecting in a forked child.
 std::shared_ptr<librados::Rados> get_cluster(const ConnectionParams& params) {
     auto& r = registry();
     std::scoped_lock lock(r.mutex);
@@ -91,6 +99,7 @@ std::shared_ptr<librados::Rados> get_cluster(const ConnectionParams& params) {
         r.clusters.clear();
         r.pid = pid;
     }
+    // Reuse an existing connection for identical settings; otherwise connect and remember it.
     auto key = params.cache_key();
     if (auto it = r.clusters.find(key); it != r.clusters.end())
         return it->second;

@@ -16,6 +16,7 @@
 
 namespace arcticdb::storage::rados {
 
+// Everything needed to connect to a cluster. Empty strings mean librados defaults.
 struct ConnectionParams {
     std::string cluster_name;
     std::string client_id;

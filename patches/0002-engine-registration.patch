@@ -1,12 +1,12 @@
 diff --git a/cpp/arcticdb/entity/protobufs.hpp b/cpp/arcticdb/entity/protobufs.hpp
-index 403d1e9..080b5f1 100644
+index 403d1e9..4dfd6ce 100644
 --- a/cpp/arcticdb/entity/protobufs.hpp
 +++ b/cpp/arcticdb/entity/protobufs.hpp
 @@ -18,6 +18,7 @@
  #include <nfs_backed_storage.pb.h>
  #include <azure_storage.pb.h>
  #include <mapped_file_storage.pb.h>
-+#include <rados_storage.pb.h>
++#include <rados_storage.pb.h> // native Ceph RADOS backend config
  #include <config.pb.h>
  #include <utils.pb.h>
  
@@ -18,7 +18,7 @@ index 403d1e9..080b5f1 100644
  
  } // namespace arcticdb::proto
 diff --git a/cpp/arcticdb/storage/storage_factory.cpp b/cpp/arcticdb/storage/storage_factory.cpp
-index 7ba0ac4..cb2795f 100644
+index 7ba0ac4..c06516a 100644
 --- a/cpp/arcticdb/storage/storage_factory.cpp
 +++ b/cpp/arcticdb/storage/storage_factory.cpp
 @@ -14,6 +14,7 @@
@@ -29,31 +29,71 @@ index 7ba0ac4..cb2795f 100644
  #include <arcticdb/util/pb_util.hpp>
  
  namespace arcticdb::storage {
-@@ -72,6 +73,10 @@ std::shared_ptr<Storage> create_storage(
+@@ -72,6 +73,11 @@ std::shared_ptr<Storage> create_storage(
          file::MappedFileStorage::Config mapped_config;
          storage_descriptor.config().UnpackTo(&mapped_config);
          storage = std::make_shared<file::MappedFileStorage>(library_path, mode, mapped_config);
 +    } else if (type_name == rados::RadosStorage::Config::descriptor()->full_name()) {
++        // Native Ceph RADOS backend (librados)
 +        rados::RadosStorage::Config rados_config;
 +        storage_descriptor.config().UnpackTo(&rados_config);
 +        storage = std::make_shared<rados::RadosStorage>(library_path, mode, rados_config);
      } else
          throw std::runtime_error(fmt::format("Unknown config type {}", type_name));
  
+diff --git a/cpp/arcticdb/toolbox/query_stats.cpp b/cpp/arcticdb/toolbox/query_stats.cpp
+index 0629e8b..f732f02 100644
+--- a/cpp/arcticdb/toolbox/query_stats.cpp
++++ b/cpp/arcticdb/toolbox/query_stats.cpp
+@@ -60,6 +60,16 @@ std::string task_type_to_string(TaskType task_type) {
+         return "Memory_DeleteObject";
+     case TaskType::Memory_HeadObject:
+         return "Memory_HeadObject";
++    case TaskType::Rados_ListObjects:
++        return "Rados_ListObjects";
++    case TaskType::Rados_PutObject:
++        return "Rados_PutObject";
++    case TaskType::Rados_GetObject:
++        return "Rados_GetObject";
++    case TaskType::Rados_DeleteObject:
++        return "Rados_DeleteObject";
++    case TaskType::Rados_HeadObject:
++        return "Rados_HeadObject";
+     default:
+         log::version().warn("Unknown task type {}", static_cast<int>(task_type));
+         return "Unknown";
+diff --git a/cpp/arcticdb/toolbox/query_stats.hpp b/cpp/arcticdb/toolbox/query_stats.hpp
+index 3d4bb51..09f3134 100644
+--- a/cpp/arcticdb/toolbox/query_stats.hpp
++++ b/cpp/arcticdb/toolbox/query_stats.hpp
+@@ -30,6 +30,12 @@ enum class TaskType : size_t {
+     Memory_GetObject = 8,
+     Memory_DeleteObject = 9,
+     Memory_HeadObject = 10,
++    // Native Ceph RADOS backend (storage/rados)
++    Rados_ListObjects = 11,
++    Rados_PutObject = 12,
++    Rados_GetObject = 13,
++    Rados_DeleteObject = 14,
++    Rados_HeadObject = 15,
+     END
+ };
+ 
 diff --git a/cpp/arcticdb/util/error_code.hpp b/cpp/arcticdb/util/error_code.hpp
-index 37bee32..bb0ee3a 100644
+index 37bee32..acbe756 100644
 --- a/cpp/arcticdb/util/error_code.hpp
 +++ b/cpp/arcticdb/util/error_code.hpp
-@@ -96,6 +96,8 @@ inline std::unordered_map<ErrorCategory, const char*> get_error_category_names()
+@@ -96,6 +96,9 @@ inline std::unordered_map<ErrorCategory, const char*> get_error_category_names()
      ERROR_CODE(5050, E_MONGO_BULK_OP_NO_REPLY)                                                                         \
      ERROR_CODE(5051, E_UNEXPECTED_MONGO_ERROR)                                                                         \
      ERROR_CODE(5052, E_MONGO_RETRYABLE)                                                                                \
++    /* Native Ceph RADOS backend */                                                                                   \
 +    ERROR_CODE(5060, E_UNEXPECTED_RADOS_ERROR)                                                                         \
 +    ERROR_CODE(5061, E_RADOS_RETRYABLE)                                                                                \
      ERROR_CODE(5090, E_NON_INCREASING_INDEX_VERSION)                                                                   \
      ERROR_CODE(6000, E_UNSORTED_DATA)                                                                                  \
      ERROR_CODE(7000, E_INVALID_USER_ARGUMENT)                                                                          \
-@@ -197,6 +199,8 @@ using UnexpectedAzureException = ArcticSpecificException<ErrorCode::E_UNEXPECTED
+@@ -197,6 +200,8 @@ using UnexpectedAzureException = ArcticSpecificException<ErrorCode::E_UNEXPECTED
  using MongoOperationNoReplyException = ArcticSpecificException<ErrorCode::E_MONGO_BULK_OP_NO_REPLY>;
  using UnexpectedMongoException = ArcticSpecificException<ErrorCode::E_UNEXPECTED_MONGO_ERROR>;
  using MongoRetryableException = ArcticSpecificException<ErrorCode::E_MONGO_RETRYABLE>;
@@ -62,7 +102,7 @@ index 37bee32..bb0ee3a 100644
  using NonIncreasingIndexVersionException = ArcticSpecificException<ErrorCode::E_NON_INCREASING_INDEX_VERSION>;
  using SortingException = ArcticCategorizedException<ErrorCategory::SORTING>;
  using UnsortedDataException = ArcticSpecificException<ErrorCode::E_UNSORTED_DATA>;
-@@ -261,6 +265,16 @@ template<>
+@@ -261,6 +266,16 @@ template<>
      throw ArcticSpecificException<ErrorCode::E_MONGO_RETRYABLE>(msg);
  }
  

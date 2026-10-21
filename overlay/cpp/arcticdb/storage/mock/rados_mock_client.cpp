@@ -8,6 +8,8 @@
 
 namespace arcticdb::storage::rados {
 
+// Parses "#Failure_<Operation>_<errno>_" out of an object name (same convention as the S3 mock) and returns the
+// negated errno to fail that operation with.
 std::optional<RadosErrc> has_object_failure_trigger(const std::string& oid, StorageOperation operation) {
     auto failure_string_for_operation = "#Failure_" + operation_to_string(operation) + "_";
     auto position = oid.rfind(failure_string_for_operation);
@@ -23,6 +25,7 @@ std::optional<RadosErrc> has_object_failure_trigger(const std::string& oid, Stor
     }
 }
 
+// Returns the object's bytes and xattrs, or -ENOENT.
 folly::Future<RadosReadResult> MockRadosClient::read(PoolKind, const std::string& oid) {
     if (auto failure = has_object_failure_trigger(oid, StorageOperation::READ))
         return RadosReadResult{*failure, {}, {}};
@@ -39,6 +42,7 @@ folly::Future<RadosReadResult> MockRadosClient::read(PoolKind, const std::string
     return RadosReadResult{0, std::move(bytes), it->second.xattrs};
 }
 
+// Stores a copy of the bytes, honouring the exclusive / must-exist modes like the OSD does. Xattrs are merged.
 folly::Future<RadosErrc> MockRadosClient::write(
         PoolKind, const std::string& oid, RadosWriteBuffer buffer, WriteMode mode
 ) {
@@ -59,6 +63,7 @@ folly::Future<RadosErrc> MockRadosClient::write(
     return 0;
 }
 
+// Reports existence and size.
 folly::Future<RadosErrc> MockRadosClient::stat(PoolKind, const std::string& oid, uint64_t* size) {
     if (auto failure = has_object_failure_trigger(oid, StorageOperation::EXISTS))
         return *failure;
@@ -72,6 +77,7 @@ folly::Future<RadosErrc> MockRadosClient::stat(PoolKind, const std::string& oid,
     return 0;
 }
 
+// Deletes an object, or -ENOENT.
 folly::Future<RadosErrc> MockRadosClient::remove(PoolKind, const std::string& oid) {
     if (auto failure = has_object_failure_trigger(oid, StorageOperation::DELETE))
         return *failure;
@@ -82,6 +88,7 @@ folly::Future<RadosErrc> MockRadosClient::remove(PoolKind, const std::string& oi
     return objects_.erase(oid) ? 0 : -ENOENT;
 }
 
+// Sets omap entries, creating the object if needed (as the real client's create(false)+omap_set does).
 folly::Future<RadosErrc> MockRadosClient::omap_set(
         PoolKind, const std::string& oid, std::map<std::string, std::string> entries
 ) {
@@ -92,6 +99,7 @@ folly::Future<RadosErrc> MockRadosClient::omap_set(
     return 0;
 }
 
+// Removes omap entries; -ENOENT if the object doesn't exist (as with assert_exists in the real client).
 folly::Future<RadosErrc> MockRadosClient::omap_rm(PoolKind, const std::string& oid, std::vector<std::string> keys) {
     std::scoped_lock lock(mutex_);
     auto it = objects_.find(oid);
@@ -102,6 +110,7 @@ folly::Future<RadosErrc> MockRadosClient::omap_rm(PoolKind, const std::string& o
     return 0;
 }
 
+// Returns sorted omap entries after start_after that start with filter_prefix, like omap_get_vals2.
 folly::Future<OmapPage> MockRadosClient::omap_list(
         PoolKind, const std::string& oid, const std::string& start_after, const std::string& filter_prefix,
         uint64_t max_entries
@@ -130,6 +139,7 @@ folly::Future<OmapPage> MockRadosClient::omap_list(
     return page;
 }
 
+// Lists objects in the given slice (objects are assigned to slices by name hash), paging by object name.
 ListPage MockRadosClient::list_objects(
         PoolKind, size_t slice, size_t num_slices, const std::optional<std::string>& cursor, size_t max
 ) {

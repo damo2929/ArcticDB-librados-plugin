@@ -1,5 +1,17 @@
 # ArcticDB native RADOS backend
 
+> **Proof of concept: no guarantee, no warranty.**
+>
+> This project grew out of a conversation with a customer at [croit GmbH](https://croit.io). I built it as a prototype
+> to find out whether ArcticDB could use a Ceph RADOS pool directly through librados, without going through RGW/S3.
+>
+> It is **not production software**. It comes with no guarantee, warranty or support of any kind, express or implied.
+> It may lose or corrupt data, and its on-disk layout may change without notice. It is published as a **starting
+> point** for anyone who wants to build on it, test it further, or take the idea upstream to ArcticDB.
+>
+> What has and hasn't been tested, the known limitations and the open design questions are all listed in
+> [docs/design.md](docs/design.md). Please read it before relying on any of this.
+
 A storage engine that lets ArcticDB use a Ceph RADOS pool directly through librados, with no RGW or S3 layer in between:
 
 ```python

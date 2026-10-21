@@ -1,5 +1,5 @@
 diff --git a/cpp/arcticdb/storage/test/test_storage_exceptions.cpp b/cpp/arcticdb/storage/test/test_storage_exceptions.cpp
-index ac171da..57c9daf 100644
+index ac171da..10db221 100644
 --- a/cpp/arcticdb/storage/test/test_storage_exceptions.cpp
 +++ b/cpp/arcticdb/storage/test/test_storage_exceptions.cpp
 @@ -19,6 +19,7 @@
@@ -10,10 +10,11 @@ index ac171da..57c9daf 100644
  #include <arcticdb/storage/test/common.hpp>
  
  #include <filesystem>
-@@ -136,6 +137,20 @@ class MongoMockStorageFactory : public StorageFactory {
+@@ -136,6 +137,21 @@ class MongoMockStorageFactory : public StorageFactory {
      }
  };
  
++// Native Ceph RADOS backend over the in-memory mock RADOS client.
 +class RadosMockStorageFactory : public StorageFactory {
 +  public:
 +    std::unique_ptr<arcticdb::storage::Storage> create() override {
@@ -31,7 +32,7 @@ index ac171da..57c9daf 100644
  // Generic tests that run with all types of storages
  
  class GenericStorageTest : public ::testing::TestWithParam<std::shared_ptr<StorageFactory>> {
-@@ -179,7 +194,7 @@ INSTANTIATE_TEST_SUITE_P(
+@@ -179,7 +195,7 @@ INSTANTIATE_TEST_SUITE_P(
          AllStoragesCommonTests, GenericStorageTest,
          ::testing::Values(
                  std::make_shared<LMDBStorageFactory>(), std::make_shared<LMDBStorageFactory>(true),
@@ -41,20 +42,21 @@ index ac171da..57c9daf 100644
  );
  
 diff --git a/cpp/arcticdb/storage/test/test_storage_operations.cpp b/cpp/arcticdb/storage/test/test_storage_operations.cpp
-index b310136..afb5d99 100644
+index b310136..5358ec3 100644
 --- a/cpp/arcticdb/storage/test/test_storage_operations.cpp
 +++ b/cpp/arcticdb/storage/test/test_storage_operations.cpp
-@@ -77,7 +77,7 @@ TEST_P(StorageTestSuite, test_exists_checks_everything) {
+@@ -77,7 +77,8 @@ TEST_P(StorageTestSuite, test_exists_checks_everything) {
  
  using namespace std::string_literals;
  
 -std::vector<StorageGenerator> get_storage_generators() { return {"lmdb"s, "mem"s, "mongo"s, "azure"s, "s3"s}; }
++// "rados" = native Ceph RADOS backend over the mock RADOS client.
 +std::vector<StorageGenerator> get_storage_generators() { return {"lmdb"s, "mem"s, "mongo"s, "azure"s, "s3"s, "rados"s}; }
  
  INSTANTIATE_TEST_SUITE_P(
          TestStorageOperations, StorageTestSuite, testing::ValuesIn(get_storage_generators()),
 diff --git a/cpp/arcticdb/util/test/test_utils.hpp b/cpp/arcticdb/util/test/test_utils.hpp
-index e00e996..7de490e 100644
+index e00e996..bf3e25a 100644
 --- a/cpp/arcticdb/util/test/test_utils.hpp
 +++ b/cpp/arcticdb/util/test/test_utils.hpp
 @@ -23,6 +23,7 @@
@@ -65,11 +67,12 @@ index e00e996..7de490e 100644
  
  using namespace arcticdb;
  
-@@ -238,6 +239,11 @@ class StorageGenerator {
+@@ -238,6 +239,12 @@ class StorageGenerator {
              return std::make_unique<storage::s3::S3Storage>(
                      library_path, storage::OpenMode::WRITE, storage::s3::S3Settings(cfg)
              );
 +        } else if (storage_ == "rados") {
++            // Native Ceph RADOS backend, backed by the in-memory mock RADOS client.
 +            arcticdb::proto::rados_storage::Config cfg;
 +            cfg.set_pool("test");
 +            cfg.set_use_mock_storage_for_testing(true);
@@ -77,8 +80,20 @@ index e00e996..7de490e 100644
          } else if (storage_ == "mongo") {
              arcticdb::proto::mongo_storage::Config cfg;
              cfg.set_use_mock_storage_for_testing(true);
+diff --git a/pyproject.toml b/pyproject.toml
+index 1988c72..6642d65 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -80,6 +80,7 @@ markers = [
+     "azurite: Mark from test usage for execution against Simulated Azurite storage",
+     "nfs: Mark from test usage for execution against Simulated NFS S3 storage",
+     "mongo: Mark from test usage for execution against Mongo storage",
++    "rados: Mark from test usage for execution against Ceph RADOS storage (native librados backend)",
+     "merge_update: Merge update tests across unit, hypothesis, and stress",
+     "real_s3: Mark from test usage for execution against AWS S3 storage",
+     "real_azure: Mark from test usage for execution against Azure storage",
 diff --git a/python/tests/conftest.py b/python/tests/conftest.py
-index c93b6fa..3241920 100644
+index c93b6fa..e936068 100644
 --- a/python/tests/conftest.py
 +++ b/python/tests/conftest.py
 @@ -53,6 +53,7 @@ from arcticdb.storage_fixtures.s3 import (
@@ -97,10 +112,11 @@ index c93b6fa..3241920 100644
      REAL_S3_TESTS_MARK,
      SSL_TEST_SUPPORTED,
      VENV_COMPAT_TESTS_MARK,
-@@ -791,6 +793,17 @@ def mongo_server_fn_scope():
+@@ -791,6 +793,18 @@ def mongo_server_fn_scope():
          yield s
  
  
++# Native Ceph RADOS backend: an external cluster (ARCTICDB_RADOS_TEST_URI); each test gets its own namespace prefix.
 +@pytest.fixture(scope="session")
 +def rados_server():
 +    yield ExternalRadosCluster()
@@ -115,7 +131,7 @@ index c93b6fa..3241920 100644
  @pytest.fixture(scope="session")
  def mem_storage() -> Generator[InMemoryStorageFixture, None, None]:
      with InMemoryStorageFixture() as f:
-@@ -837,6 +850,7 @@ def filter_out_unwanted_mark(request, current_param):
+@@ -837,6 +851,7 @@ def filter_out_unwanted_mark(request, current_param):
          pytest.param("gcp", marks=SIM_GCP_TESTS_MARK),
          pytest.param("azurite", marks=AZURE_TESTS_MARK),
          pytest.param("mongo", marks=MONGO_TESTS_MARK),
@@ -123,7 +139,7 @@ index c93b6fa..3241920 100644
          pytest.param("real_s3", marks=REAL_S3_TESTS_MARK),
          pytest.param("real_gcp", marks=REAL_GCP_TESTS_MARK),
          pytest.param("real_azure", marks=REAL_AZURE_TESTS_MARK),
-@@ -859,6 +873,7 @@ def arctic_client(request, encoding_version) -> Arctic:
+@@ -859,6 +874,7 @@ def arctic_client(request, encoding_version) -> Arctic:
          pytest.param("mem", marks=MEM_TESTS_MARK),
          pytest.param("azurite", marks=AZURE_TESTS_MARK),
          pytest.param("mongo", marks=MONGO_TESTS_MARK),
@@ -131,10 +147,11 @@ index c93b6fa..3241920 100644
          pytest.param("real_s3", marks=REAL_S3_TESTS_MARK),
          pytest.param("real_gcp", marks=REAL_GCP_TESTS_MARK),
          pytest.param("real_azure", marks=REAL_AZURE_TESTS_MARK),
-@@ -1049,6 +1064,11 @@ def mongo_store_factory(mongo_storage, lib_name) -> Generator[Callable[..., Nati
+@@ -1049,6 +1065,12 @@ def mongo_store_factory(mongo_storage, lib_name) -> Generator[Callable[..., Nati
      yield from _store_factory(lib_name, mongo_storage)
  
  
++# NativeVersionStore factory on the RADOS backend.
 +@pytest.fixture
 +def rados_store_factory(rados_storage, lib_name) -> Generator[Callable[..., NativeVersionStore], None, None]:
 +    yield from _store_factory(lib_name, rados_storage)
@@ -143,7 +160,7 @@ index c93b6fa..3241920 100644
  @pytest.fixture
  def in_memory_store_factory(mem_storage, lib_name) -> Generator[Callable[..., NativeVersionStore], None, None]:
      yield from _store_factory(lib_name, mem_storage)
-@@ -1183,12 +1203,18 @@ def mongo_version_store(mongo_store_factory) -> NativeVersionStore:
+@@ -1183,12 +1205,18 @@ def mongo_version_store(mongo_store_factory) -> NativeVersionStore:
      return mongo_store_factory()
  
  
@@ -162,7 +179,7 @@ index c93b6fa..3241920 100644
          pytest.param("real_s3_store_factory", marks=REAL_S3_TESTS_MARK),
          pytest.param("real_gcp_store_factory", marks=REAL_GCP_TESTS_MARK),
          pytest.param("real_azure_store_factory", marks=REAL_AZURE_TESTS_MARK),
-@@ -1272,6 +1298,7 @@ def version_store_and_real_s3_basic_store_factory(request):
+@@ -1272,6 +1300,7 @@ def version_store_and_real_s3_basic_store_factory(request):
      params=[
          pytest.param("version_store_factory", marks=LMDB_TESTS_MARK),
          pytest.param("in_memory_store_factory", marks=MEM_TESTS_MARK),
@@ -170,7 +187,7 @@ index c93b6fa..3241920 100644
          pytest.param("real_s3_store_factory", marks=REAL_S3_TESTS_MARK),
          pytest.param("real_gcp_store_factory", marks=REAL_GCP_TESTS_MARK),
          pytest.param("real_azure_store_factory", marks=REAL_AZURE_TESTS_MARK),
-@@ -1711,6 +1738,7 @@ def lmdb_version_store_static_and_dynamic_v1(request) -> Generator[NativeVersion
+@@ -1711,6 +1740,7 @@ def lmdb_version_store_static_and_dynamic_v1(request) -> Generator[NativeVersion
          pytest.param("nfs_backed_s3_version_store_v2", marks=SIM_NFS_TESTS_MARK),
          pytest.param("azure_version_store", marks=AZURE_TESTS_MARK),
          pytest.param("mongo_version_store", marks=MONGO_TESTS_MARK),
@@ -178,7 +195,7 @@ index c93b6fa..3241920 100644
          pytest.param("real_s3_version_store", marks=REAL_S3_TESTS_MARK),
          pytest.param("real_gcp_version_store", marks=REAL_GCP_TESTS_MARK),
          pytest.param("real_azure_version_store", marks=REAL_AZURE_TESTS_MARK),
-@@ -2049,6 +2077,7 @@ class Marks:
+@@ -2049,6 +2079,7 @@ class Marks:
      mem = Mark("mem")
      nfs = Mark("nfs")
      mongo = Mark("mongo")
@@ -186,7 +203,7 @@ index c93b6fa..3241920 100644
      azurite = Mark("azurite")
      s3 = Mark("s3")
      gcp = Mark("gcp")
-@@ -2134,6 +2163,7 @@ FIXTURES_TO_MARK = {
+@@ -2134,6 +2165,7 @@ FIXTURES_TO_MARK = {
      Marks.nfs.name: [re.compile(r"^nfs_.*", re.I)] + ALL_FIXTURES + OBJECT_STORE_FIXTURES,
      Marks.gcp.name: [re.compile(r"^gcp_.*", re.I)] + ALL_FIXTURES,
      Marks.mongo.name: [re.compile(r"^mongo_.*", re.I)] + ALL_FIXTURES,
@@ -194,6 +211,141 @@ index c93b6fa..3241920 100644
      Marks.azurite.name: (
          [re.compile(r"^(azurite_.*|azure_.*)", re.I)]
          + ALL_FIXTURES
+diff --git a/python/tests/unit/arcticdb/test_column_stats_creation.py b/python/tests/unit/arcticdb/test_column_stats_creation.py
+index c6e26ae..b213f0c 100644
+--- a/python/tests/unit/arcticdb/test_column_stats_creation.py
++++ b/python/tests/unit/arcticdb/test_column_stats_creation.py
+@@ -13,6 +13,8 @@ import pandas as pd
+ import polars as pl
+ import pyarrow as pa
+ import pytest
++from tests.conftest import _store_factory
++from tests.util.mark import RADOS_TESTS_MARK
+ from hypothesis import given, settings, strategies as st
+ from polars.testing import assert_frame_equal as pl_assert_frame_equal
+ 
+@@ -1057,6 +1059,15 @@ def test_column_stats_duplicated_column_names(in_memory_store_factory, lib_name,
+     assert_stats_equal(column_stats, expected_column_stats)
+ 
+ 
++
++# Native Ceph RADOS backend: run this module's column-stats tests against the in-memory backend (as upstream does) and,
++# when ARCTICDB_STORAGE_RADOS is enabled, against RADOS too. The in_memory_* fixtures in conftest.py all build on
++# in_memory_store_factory, so overriding it here re-targets them for this module only.
++@pytest.fixture(params=["mem", pytest.param("rados", marks=RADOS_TESTS_MARK)])
++def in_memory_store_factory(request, lib_name):
++    storage = request.getfixturevalue("mem_storage" if request.param == "mem" else "rados_storage")
++    yield from _store_factory(lib_name, storage)
++
+ @pytest.mark.parametrize("index_name", ("index", "some-other-name"))
+ def test_column_stats_col_called_index(
+     in_memory_store_factory, lib_name, encoding_version, any_output_format, index_name, column_stats_filtering_enabled
+diff --git a/python/tests/unit/arcticdb/test_column_stats_isin.py b/python/tests/unit/arcticdb/test_column_stats_isin.py
+index dfa00c6..e696347 100644
+--- a/python/tests/unit/arcticdb/test_column_stats_isin.py
++++ b/python/tests/unit/arcticdb/test_column_stats_isin.py
+@@ -1,5 +1,7 @@
+ import numpy as np
+ import pytest
++from tests.conftest import _store_factory
++from tests.util.mark import RADOS_TESTS_MARK
+ import pandas as pd
+ 
+ from arcticdb.util.test import assert_frame_equal, query_stats_operation_count
+@@ -7,14 +9,28 @@ from arcticdb.version_store.processing import QueryBuilder
+ import arcticdb.toolbox.query_stats as qs
+ 
+ 
++
++def _backend_op_count(stats, operation, key_type):
++    """Count of `operation` (e.g. "GetObject") on key_type, whichever backend (Memory_ or Rados_) recorded it."""
++    return sum(query_stats_operation_count(stats, f"{prefix}_{operation}", key_type) for prefix in ("Memory", "Rados"))
++
+ def get_table_data_read_count():
+     stats = qs.get_query_stats()
+-    return query_stats_operation_count(stats, "Memory_GetObject", "TABLE_DATA")
++    return _backend_op_count(stats, "GetObject", "TABLE_DATA")
+ 
+ 
+ sym = "sym"
+ 
+ 
++# Native Ceph RADOS backend: run this module's column-stats tests against the in-memory backend (as upstream does) and,
++# when ARCTICDB_STORAGE_RADOS is enabled, against RADOS too. The in_memory_* fixtures in conftest.py all build on
++# in_memory_store_factory, so overriding it here re-targets them for this module only.
++@pytest.fixture(params=["mem", pytest.param("rados", marks=RADOS_TESTS_MARK)])
++def in_memory_store_factory(request, lib_name):
++    storage = request.getfixturevalue("mem_storage" if request.param == "mem" else "rados_storage")
++    yield from _store_factory(lib_name, storage)
++
++
+ @pytest.mark.parametrize(
+     "isin_values,expected_reads",
+     [
+diff --git a/python/tests/unit/arcticdb/test_column_stats_optimisation.py b/python/tests/unit/arcticdb/test_column_stats_optimisation.py
+index 24ec3a4..b9a2ea7 100644
+--- a/python/tests/unit/arcticdb/test_column_stats_optimisation.py
++++ b/python/tests/unit/arcticdb/test_column_stats_optimisation.py
+@@ -4,6 +4,8 @@ import numpy as np
+ import polars as pl
+ import pyarrow as pa
+ import pytest
++from tests.conftest import _store_factory
++from tests.util.mark import RADOS_TESTS_MARK
+ from arcticdb_ext.storage import KeyType
+ 
+ from arcticdb.util.test import assert_frame_equal, query_stats_operation_count
+@@ -14,32 +16,46 @@ import pandas as pd
+ from arcticdb_ext.exceptions import SchemaException, UserInputException
+ 
+ 
++
++def _backend_op_count(stats, operation, key_type):
++    """Count of `operation` (e.g. "GetObject") on key_type, whichever backend (Memory_ or Rados_) recorded it."""
++    return sum(query_stats_operation_count(stats, f"{prefix}_{operation}", key_type) for prefix in ("Memory", "Rados"))
++
+ def get_table_data_read_count():
+     """Get the number of TABLE_DATA keys read from query stats."""
+     stats = qs.get_query_stats()
+-    return query_stats_operation_count(stats, "Memory_GetObject", "TABLE_DATA")
++    return _backend_op_count(stats, "GetObject", "TABLE_DATA")
+ 
+ 
+ def get_column_stats_read_count():
+     """Get the number of COLUMN_STATS keys read from query stats."""
+     stats = qs.get_query_stats()
+-    return query_stats_operation_count(stats, "Memory_GetObject", "COLUMN_STATS")
++    return _backend_op_count(stats, "GetObject", "COLUMN_STATS")
+ 
+ 
+ def get_table_index_read_count():
+     """Get the number of TABLE_INDEX keys read from query stats."""
+     stats = qs.get_query_stats()
+-    return query_stats_operation_count(stats, "Memory_GetObject", "TABLE_INDEX")
++    return _backend_op_count(stats, "GetObject", "TABLE_INDEX")
+ 
+ 
+ def get_column_stats_write_count():
+     stats = qs.get_query_stats()
+-    return query_stats_operation_count(stats, "Memory_PutObject", "COLUMN_STATS")
++    return _backend_op_count(stats, "PutObject", "COLUMN_STATS")
+ 
+ 
+ sym = "sym"
+ 
+ 
++# Native Ceph RADOS backend: run this module's column-stats tests against the in-memory backend (as upstream does) and,
++# when ARCTICDB_STORAGE_RADOS is enabled, against RADOS too. The in_memory_* fixtures in conftest.py all build on
++# in_memory_store_factory, so overriding it here re-targets them for this module only.
++@pytest.fixture(params=["mem", pytest.param("rados", marks=RADOS_TESTS_MARK)])
++def in_memory_store_factory(request, lib_name):
++    storage = request.getfixturevalue("mem_storage" if request.param == "mem" else "rados_storage")
++    yield from _store_factory(lib_name, storage)
++
++
+ def test_create_column_stats_reads_index_key_once_and_writes_single_key(in_memory_version_store, clear_query_stats):
+     lib = in_memory_version_store
+     df0 = pd.DataFrame({"col_1": [1, 2], "col_2": ["a", "b"]}, index=pd.date_range("2000-01-01", periods=2))
 diff --git a/python/tests/util/mark.py b/python/tests/util/mark.py
 index bd57201..ee301d0 100644
 --- a/python/tests/util/mark.py
