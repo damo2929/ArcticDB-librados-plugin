@@ -27,8 +27,8 @@ export RADOS_ROOT="$SDK"
 cd "$ROOT/build/ArcticDB/cpp"
 PYVER="$(python -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
 cmake --preset "$PRESET" -DTEST=ON -DARCTICDB_WITH_RADOS=ON -DBUILD_PYTHON_VERSION="$PYVER" \
-    -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu/ceph" \
-    -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu/ceph"
+    -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,$CONDA_PREFIX/lib:/usr/lib/x86_64-linux-gnu/ceph:/usr/lib/x86_64-linux-gnu" \
+    -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,$CONDA_PREFIX/lib:/usr/lib/x86_64-linux-gnu/ceph:/usr/lib/x86_64-linux-gnu"
 cmake --build "out/$PRESET-build" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-$(( $(nproc) / 2 ))}" --target "${TARGETS[@]}"
 
 # Make the extension importable from the source tree (python/arcticdb_ext*.so), like upstream's `make symlink`.
