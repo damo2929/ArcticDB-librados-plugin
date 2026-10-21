@@ -1,0 +1,33 @@
+diff --git a/cpp/arcticdb/CMakeLists.txt b/cpp/arcticdb/CMakeLists.txt
+index 4d47540..856ef61 100644
+--- a/cpp/arcticdb/CMakeLists.txt
++++ b/cpp/arcticdb/CMakeLists.txt
+@@ -641,6 +641,8 @@ endif()
+ strip_fd_from_compile_object()
+ set_pdb_name_per_translation_unit(${arcticdb_srcs})
+ 
++include(storage/rados/rados.cmake)
++
+ add_library(arcticdb_core_object OBJECT ${arcticdb_srcs})
+ 
+ target_compile_definitions(
+@@ -805,6 +807,7 @@ set (arcticdb_core_libraries
+         sparrow::sparrow
+         PCRE2::8BIT
+         PCRE2::32BIT
++        ${ARCTICDB_RADOS_LIBRARIES}
+ )
+ 
+ if(${ARCTICDB_COUNT_ALLOCATIONS})
+diff --git a/cpp/proto/arcticc/pb2/proto/CMakeLists.txt b/cpp/proto/arcticc/pb2/proto/CMakeLists.txt
+index 1eb9ebe..9310df2 100755
+--- a/cpp/proto/arcticc/pb2/proto/CMakeLists.txt
++++ b/cpp/proto/arcticc/pb2/proto/CMakeLists.txt
+@@ -16,6 +16,7 @@ SET(PROTO_IN_FILES
+         azure_storage.proto
+         nfs_backed_storage.proto
+         mapped_file_storage.proto
++        rados_storage.proto
+         logger.proto
+         )
+ 

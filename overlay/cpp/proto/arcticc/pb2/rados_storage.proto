@@ -1,0 +1,41 @@
+/*
+Native Ceph RADOS storage backend for ArcticDB.
+
+Talks to a RADOS pool directly through librados. Each library lives in its own RADOS
+namespace; listable key types are tracked in a sharded omap index so listing never has
+to walk the pool.
+*/
+syntax = "proto3";
+
+package arcticc.pb2.rados_storage_pb2;
+
+message Config {
+    // Pool holding segment data (TABLE_DATA, TABLE_INDEX, ...). Must be a replicated pool if meta_pool is unset.
+    string pool = 1;
+    // Optional pool for latency sensitive objects: ref keys, version keys, locks and the omap index.
+    // Must be a replicated pool (omap). Defaults to `pool`.
+    string meta_pool = 2;
+    // Prepended to the library path to form the RADOS namespace: "<namespace_prefix>/<library/path>".
+    string namespace_prefix = 3;
+
+    // Cluster connection. No secrets are persisted here: the keyring is supplied at runtime via RadosOverride.
+    string cluster_name = 4;   // default "ceph"
+    string client_id = 5;      // default "admin" (i.e. client.admin)
+    string conf_path = 6;      // default: librados search path (/etc/ceph/ceph.conf, $CEPH_CONF, ...)
+    string keyring = 7;        // runtime only; masked before being written to the config library
+    // Applied with Rados::conf_set before connect, e.g. objecter_inflight_op_bytes.
+    map<string, string> conf_overrides = 8;
+
+    // Number of omap shards per key type for the key index. 0 means default (8).
+    uint32 index_shards = 9;
+    // Key types (by long name, e.g. "tdata") that are NOT written to the omap index. Listing them falls back to a
+    // parallel namespace scan. Empty means default: only TABLE_DATA is unindexed.
+    repeated string unindexed_key_types = 10;
+    // Segments larger than this are split across several RADOS objects. 0 means default (64 MiB), which stays below
+    // the default osd_max_write_size (90 MiB) and osd_max_object_size (128 MiB).
+    uint64 chunk_size = 11;
+    // Seconds to wait for an individual RADOS op before failing with a retryable error. 0 means librados default.
+    uint32 op_timeout_s = 12;
+
+    bool use_mock_storage_for_testing = 100;
+}

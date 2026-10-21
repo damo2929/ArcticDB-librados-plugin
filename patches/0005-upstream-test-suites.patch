@@ -1,0 +1,214 @@
+diff --git a/cpp/arcticdb/storage/test/test_storage_exceptions.cpp b/cpp/arcticdb/storage/test/test_storage_exceptions.cpp
+index ac171da..57c9daf 100644
+--- a/cpp/arcticdb/storage/test/test_storage_exceptions.cpp
++++ b/cpp/arcticdb/storage/test/test_storage_exceptions.cpp
+@@ -19,6 +19,7 @@
+ #include <arcticdb/storage/mock/azure_mock_client.hpp>
+ #include <arcticdb/storage/mongo/mongo_storage.hpp>
+ #include <arcticdb/storage/mock/mongo_mock_client.hpp>
++#include <arcticdb/storage/rados/rados_storage.hpp>
+ #include <arcticdb/storage/test/common.hpp>
+ 
+ #include <filesystem>
+@@ -136,6 +137,20 @@ class MongoMockStorageFactory : public StorageFactory {
+     }
+ };
+ 
++class RadosMockStorageFactory : public StorageFactory {
++  public:
++    std::unique_ptr<arcticdb::storage::Storage> create() override {
++        arcticdb::proto::rados_storage::Config cfg;
++        cfg.set_pool("test");
++        cfg.set_use_mock_storage_for_testing(true);
++        arcticdb::storage::LibraryPath library_path("lib", '/');
++
++        return std::make_unique<arcticdb::storage::rados::RadosStorage>(
++                library_path, arcticdb::storage::OpenMode::DELETE, cfg
++        );
++    }
++};
++
+ // Generic tests that run with all types of storages
+ 
+ class GenericStorageTest : public ::testing::TestWithParam<std::shared_ptr<StorageFactory>> {
+@@ -179,7 +194,7 @@ INSTANTIATE_TEST_SUITE_P(
+         AllStoragesCommonTests, GenericStorageTest,
+         ::testing::Values(
+                 std::make_shared<LMDBStorageFactory>(), std::make_shared<LMDBStorageFactory>(true),
+-                std::make_shared<MemoryStorageFactory>()
++                std::make_shared<MemoryStorageFactory>(), std::make_shared<RadosMockStorageFactory>()
+         )
+ );
+ 
+diff --git a/cpp/arcticdb/storage/test/test_storage_operations.cpp b/cpp/arcticdb/storage/test/test_storage_operations.cpp
+index b310136..afb5d99 100644
+--- a/cpp/arcticdb/storage/test/test_storage_operations.cpp
++++ b/cpp/arcticdb/storage/test/test_storage_operations.cpp
+@@ -77,7 +77,7 @@ TEST_P(StorageTestSuite, test_exists_checks_everything) {
+ 
+ using namespace std::string_literals;
+ 
+-std::vector<StorageGenerator> get_storage_generators() { return {"lmdb"s, "mem"s, "mongo"s, "azure"s, "s3"s}; }
++std::vector<StorageGenerator> get_storage_generators() { return {"lmdb"s, "mem"s, "mongo"s, "azure"s, "s3"s, "rados"s}; }
+ 
+ INSTANTIATE_TEST_SUITE_P(
+         TestStorageOperations, StorageTestSuite, testing::ValuesIn(get_storage_generators()),
+diff --git a/cpp/arcticdb/util/test/test_utils.hpp b/cpp/arcticdb/util/test/test_utils.hpp
+index e00e996..7de490e 100644
+--- a/cpp/arcticdb/util/test/test_utils.hpp
++++ b/cpp/arcticdb/util/test/test_utils.hpp
+@@ -23,6 +23,7 @@
+ #include <arcticdb/storage/azure/azure_storage.hpp>
+ #include <arcticdb/storage/s3/s3_storage.hpp>
+ #include <arcticdb/storage/mongo/mongo_storage.hpp>
++#include <arcticdb/storage/rados/rados_storage.hpp>
+ 
+ using namespace arcticdb;
+ 
+@@ -238,6 +239,11 @@ class StorageGenerator {
+             return std::make_unique<storage::s3::S3Storage>(
+                     library_path, storage::OpenMode::WRITE, storage::s3::S3Settings(cfg)
+             );
++        } else if (storage_ == "rados") {
++            arcticdb::proto::rados_storage::Config cfg;
++            cfg.set_pool("test");
++            cfg.set_use_mock_storage_for_testing(true);
++            return std::make_unique<storage::rados::RadosStorage>(library_path, storage::OpenMode::WRITE, cfg);
+         } else if (storage_ == "mongo") {
+             arcticdb::proto::mongo_storage::Config cfg;
+             cfg.set_use_mock_storage_for_testing(true);
+diff --git a/python/tests/conftest.py b/python/tests/conftest.py
+index c93b6fa..3241920 100644
+--- a/python/tests/conftest.py
++++ b/python/tests/conftest.py
+@@ -53,6 +53,7 @@ from arcticdb.storage_fixtures.s3 import (
+ from arcticdb.storage_fixtures.azure import real_azure_from_environment_variables
+ from arcticdb.storage_fixtures.mongo import ManagedMongoDBServer, auto_detect_server
+ from arcticdb.storage_fixtures.in_memory import InMemoryStorageFixture
++from arcticdb.storage_fixtures.rados import ExternalRadosCluster
+ from arcticdb_ext.storage import NativeVariantStorage, AWSAuthMethod, S3Settings as NativeS3Settings
+ from arcticdb_ext import set_config_int, unset_config_int
+ import arcticdb_ext.cpp_async as adb_async
+@@ -77,6 +78,7 @@ from .util.mark import (
+     WINDOWS,
+     AZURE_TESTS_MARK,
+     MONGO_TESTS_MARK,
++    RADOS_TESTS_MARK,
+     REAL_S3_TESTS_MARK,
+     SSL_TEST_SUPPORTED,
+     VENV_COMPAT_TESTS_MARK,
+@@ -791,6 +793,17 @@ def mongo_server_fn_scope():
+         yield s
+ 
+ 
++@pytest.fixture(scope="session")
++def rados_server():
++    yield ExternalRadosCluster()
++
++
++@pytest.fixture
++def rados_storage(rados_server):
++    with rados_server.create_fixture() as f:
++        yield f
++
++
+ @pytest.fixture(scope="session")
+ def mem_storage() -> Generator[InMemoryStorageFixture, None, None]:
+     with InMemoryStorageFixture() as f:
+@@ -837,6 +850,7 @@ def filter_out_unwanted_mark(request, current_param):
+         pytest.param("gcp", marks=SIM_GCP_TESTS_MARK),
+         pytest.param("azurite", marks=AZURE_TESTS_MARK),
+         pytest.param("mongo", marks=MONGO_TESTS_MARK),
++        pytest.param("rados", marks=RADOS_TESTS_MARK),
+         pytest.param("real_s3", marks=REAL_S3_TESTS_MARK),
+         pytest.param("real_gcp", marks=REAL_GCP_TESTS_MARK),
+         pytest.param("real_azure", marks=REAL_AZURE_TESTS_MARK),
+@@ -859,6 +873,7 @@ def arctic_client(request, encoding_version) -> Arctic:
+         pytest.param("mem", marks=MEM_TESTS_MARK),
+         pytest.param("azurite", marks=AZURE_TESTS_MARK),
+         pytest.param("mongo", marks=MONGO_TESTS_MARK),
++        pytest.param("rados", marks=RADOS_TESTS_MARK),
+         pytest.param("real_s3", marks=REAL_S3_TESTS_MARK),
+         pytest.param("real_gcp", marks=REAL_GCP_TESTS_MARK),
+         pytest.param("real_azure", marks=REAL_AZURE_TESTS_MARK),
+@@ -1049,6 +1064,11 @@ def mongo_store_factory(mongo_storage, lib_name) -> Generator[Callable[..., Nati
+     yield from _store_factory(lib_name, mongo_storage)
+ 
+ 
++@pytest.fixture
++def rados_store_factory(rados_storage, lib_name) -> Generator[Callable[..., NativeVersionStore], None, None]:
++    yield from _store_factory(lib_name, rados_storage)
++
++
+ @pytest.fixture
+ def in_memory_store_factory(mem_storage, lib_name) -> Generator[Callable[..., NativeVersionStore], None, None]:
+     yield from _store_factory(lib_name, mem_storage)
+@@ -1183,12 +1203,18 @@ def mongo_version_store(mongo_store_factory) -> NativeVersionStore:
+     return mongo_store_factory()
+ 
+ 
++@pytest.fixture(scope="function")
++def rados_version_store(rados_store_factory) -> NativeVersionStore:
++    return rados_store_factory()
++
++
+ @pytest.fixture(
+     scope="function",
+     params=[
+         pytest.param("s3_store_factory", marks=SIM_S3_TESTS_MARK),
+         pytest.param("nfs_backed_s3_store_factory", marks=SIM_NFS_TESTS_MARK),
+         pytest.param("azure_store_factory", marks=AZURE_TESTS_MARK),
++        pytest.param("rados_store_factory", marks=RADOS_TESTS_MARK),
+         pytest.param("real_s3_store_factory", marks=REAL_S3_TESTS_MARK),
+         pytest.param("real_gcp_store_factory", marks=REAL_GCP_TESTS_MARK),
+         pytest.param("real_azure_store_factory", marks=REAL_AZURE_TESTS_MARK),
+@@ -1272,6 +1298,7 @@ def version_store_and_real_s3_basic_store_factory(request):
+     params=[
+         pytest.param("version_store_factory", marks=LMDB_TESTS_MARK),
+         pytest.param("in_memory_store_factory", marks=MEM_TESTS_MARK),
++        pytest.param("rados_store_factory", marks=RADOS_TESTS_MARK),
+         pytest.param("real_s3_store_factory", marks=REAL_S3_TESTS_MARK),
+         pytest.param("real_gcp_store_factory", marks=REAL_GCP_TESTS_MARK),
+         pytest.param("real_azure_store_factory", marks=REAL_AZURE_TESTS_MARK),
+@@ -1711,6 +1738,7 @@ def lmdb_version_store_static_and_dynamic_v1(request) -> Generator[NativeVersion
+         pytest.param("nfs_backed_s3_version_store_v2", marks=SIM_NFS_TESTS_MARK),
+         pytest.param("azure_version_store", marks=AZURE_TESTS_MARK),
+         pytest.param("mongo_version_store", marks=MONGO_TESTS_MARK),
++        pytest.param("rados_version_store", marks=RADOS_TESTS_MARK),
+         pytest.param("real_s3_version_store", marks=REAL_S3_TESTS_MARK),
+         pytest.param("real_gcp_version_store", marks=REAL_GCP_TESTS_MARK),
+         pytest.param("real_azure_version_store", marks=REAL_AZURE_TESTS_MARK),
+@@ -2049,6 +2077,7 @@ class Marks:
+     mem = Mark("mem")
+     nfs = Mark("nfs")
+     mongo = Mark("mongo")
++    rados = Mark("rados")
+     azurite = Mark("azurite")
+     s3 = Mark("s3")
+     gcp = Mark("gcp")
+@@ -2134,6 +2163,7 @@ FIXTURES_TO_MARK = {
+     Marks.nfs.name: [re.compile(r"^nfs_.*", re.I)] + ALL_FIXTURES + OBJECT_STORE_FIXTURES,
+     Marks.gcp.name: [re.compile(r"^gcp_.*", re.I)] + ALL_FIXTURES,
+     Marks.mongo.name: [re.compile(r"^mongo_.*", re.I)] + ALL_FIXTURES,
++    Marks.rados.name: [re.compile(r"^rados_.*", re.I)] + ALL_FIXTURES + BASIC_STORE_FIXTURES + OBJECT_STORE_FIXTURES,
+     Marks.azurite.name: (
+         [re.compile(r"^(azurite_.*|azure_.*)", re.I)]
+         + ALL_FIXTURES
+diff --git a/python/tests/util/mark.py b/python/tests/util/mark.py
+index bd57201..ee301d0 100644
+--- a/python/tests/util/mark.py
++++ b/python/tests/util/mark.py
+@@ -209,6 +209,13 @@ AZURE_TESTS_MARK = pytest.mark.skipif(
+ )
+ """Mark to skip all Azure tests when MACOS or ARCTICDB_FAST_TESTS_ONLY is set."""
+ 
++# RADOS tests need an external cluster: ARCTICDB_STORAGE_RADOS=1 and ARCTICDB_RADOS_TEST_URI=rados://<pool>?conf=...
++STORAGE_RADOS = getenv_strip("ARCTICDB_STORAGE_RADOS") == "1" and bool(getenv_strip("ARCTICDB_RADOS_TEST_URI"))
++RADOS_TESTS_MARK = pytest.mark.skipif(
++    not STORAGE_RADOS,
++    reason="Skipping RADOS tests: set ARCTICDB_STORAGE_RADOS=1 and ARCTICDB_RADOS_TEST_URI",
++)
++
+ # Mongo tests will run under local storage tests
+ MONGO_TESTS_MARK = pytest.mark.skipif(
+     FAST_TESTS_ONLY or (not LINUX) or (not STORAGE_MONGO),

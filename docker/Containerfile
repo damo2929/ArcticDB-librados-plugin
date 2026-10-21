@@ -1,0 +1,36 @@
+# Build + test environment for ArcticDB with the native RADOS backend.
+#
+# ArcticDB's C++ dependencies come from conda-forge (upstream's documented dev path).
+# librados is not packaged on conda-forge, so it comes from the distro (libradospp-dev),
+# together with ceph-mon/ceph-osd/ceph-mgr which scripts/minicluster.sh uses to run a
+# throwaway single-node cluster for the integration tests.
+FROM docker.io/library/ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git patch bzip2 \
+        librados-dev libradospp-dev \
+        ceph-mon ceph-osd ceph-mgr ceph-common \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG MINIFORGE_VERSION=25.3.1-0
+RUN curl -fsSL -o /tmp/miniforge.sh \
+        https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-${MINIFORGE_VERSION}-Linux-x86_64.sh \
+    && bash /tmp/miniforge.sh -b -p /opt/conda && rm /tmp/miniforge.sh
+
+# environment-dev.yml is copied in by scripts/container.sh from the pinned ArcticDB checkout.
+# It uses conda-devenv `sel()` selectors; keep the unix lines and drop the windows ones.
+# unordered_dense is unpinned upstream, but ArcticDB uses detail::wyhash, which 5.x removed.
+COPY environment-dev.yml /tmp/environment-dev.yml
+RUN sed -i -e '/sel(win)/d' -e 's/sel(unix): //' -e 's/sel(linux): //' -e '/sel(osx)/d' \
+        -e 's/^\(\s*- unordered_dense\)\s*$/\1 <5/' /tmp/environment-dev.yml \
+    && /opt/conda/bin/mamba env create -n arcticdb -f /tmp/environment-dev.yml \
+    && /opt/conda/bin/conda clean -afy
+
+# The linux-conda presets build with plain make.
+RUN /opt/conda/bin/mamba install -n arcticdb -y make && /opt/conda/bin/conda clean -afy
+
+ENV PATH=/opt/conda/envs/arcticdb/bin:/opt/conda/bin:$PATH \
+    CONDA_PREFIX=/opt/conda/envs/arcticdb \
+    ARCTICDB_USING_CONDA=1
+WORKDIR /work

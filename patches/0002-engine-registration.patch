@@ -1,0 +1,81 @@
+diff --git a/cpp/arcticdb/entity/protobufs.hpp b/cpp/arcticdb/entity/protobufs.hpp
+index 403d1e9..080b5f1 100644
+--- a/cpp/arcticdb/entity/protobufs.hpp
++++ b/cpp/arcticdb/entity/protobufs.hpp
+@@ -18,6 +18,7 @@
+ #include <nfs_backed_storage.pb.h>
+ #include <azure_storage.pb.h>
+ #include <mapped_file_storage.pb.h>
++#include <rados_storage.pb.h>
+ #include <config.pb.h>
+ #include <utils.pb.h>
+ 
+@@ -36,5 +37,6 @@ namespace azure_storage = arcticc::pb2::azure_storage_pb2;
+ namespace config = arcticc::pb2::config_pb2;
+ namespace nfs_backed_storage = arcticc::pb2::nfs_backed_storage_pb2;
+ namespace utils = arcticc::pb2::utils_pb2;
++namespace rados_storage = arcticc::pb2::rados_storage_pb2;
+ 
+ } // namespace arcticdb::proto
+diff --git a/cpp/arcticdb/storage/storage_factory.cpp b/cpp/arcticdb/storage/storage_factory.cpp
+index 7ba0ac4..cb2795f 100644
+--- a/cpp/arcticdb/storage/storage_factory.cpp
++++ b/cpp/arcticdb/storage/storage_factory.cpp
+@@ -14,6 +14,7 @@
+ #include <arcticdb/storage/s3/s3_storage.hpp>
+ #include <arcticdb/storage/s3/nfs_backed_storage.hpp>
+ #include <arcticdb/storage/file/mapped_file_storage.hpp>
++#include <arcticdb/storage/rados/rados_storage.hpp>
+ #include <arcticdb/util/pb_util.hpp>
+ 
+ namespace arcticdb::storage {
+@@ -72,6 +73,10 @@ std::shared_ptr<Storage> create_storage(
+         file::MappedFileStorage::Config mapped_config;
+         storage_descriptor.config().UnpackTo(&mapped_config);
+         storage = std::make_shared<file::MappedFileStorage>(library_path, mode, mapped_config);
++    } else if (type_name == rados::RadosStorage::Config::descriptor()->full_name()) {
++        rados::RadosStorage::Config rados_config;
++        storage_descriptor.config().UnpackTo(&rados_config);
++        storage = std::make_shared<rados::RadosStorage>(library_path, mode, rados_config);
+     } else
+         throw std::runtime_error(fmt::format("Unknown config type {}", type_name));
+ 
+diff --git a/cpp/arcticdb/util/error_code.hpp b/cpp/arcticdb/util/error_code.hpp
+index 37bee32..bb0ee3a 100644
+--- a/cpp/arcticdb/util/error_code.hpp
++++ b/cpp/arcticdb/util/error_code.hpp
+@@ -96,6 +96,8 @@ inline std::unordered_map<ErrorCategory, const char*> get_error_category_names()
+     ERROR_CODE(5050, E_MONGO_BULK_OP_NO_REPLY)                                                                         \
+     ERROR_CODE(5051, E_UNEXPECTED_MONGO_ERROR)                                                                         \
+     ERROR_CODE(5052, E_MONGO_RETRYABLE)                                                                                \
++    ERROR_CODE(5060, E_UNEXPECTED_RADOS_ERROR)                                                                         \
++    ERROR_CODE(5061, E_RADOS_RETRYABLE)                                                                                \
+     ERROR_CODE(5090, E_NON_INCREASING_INDEX_VERSION)                                                                   \
+     ERROR_CODE(6000, E_UNSORTED_DATA)                                                                                  \
+     ERROR_CODE(7000, E_INVALID_USER_ARGUMENT)                                                                          \
+@@ -197,6 +199,8 @@ using UnexpectedAzureException = ArcticSpecificException<ErrorCode::E_UNEXPECTED
+ using MongoOperationNoReplyException = ArcticSpecificException<ErrorCode::E_MONGO_BULK_OP_NO_REPLY>;
+ using UnexpectedMongoException = ArcticSpecificException<ErrorCode::E_UNEXPECTED_MONGO_ERROR>;
+ using MongoRetryableException = ArcticSpecificException<ErrorCode::E_MONGO_RETRYABLE>;
++using UnexpectedRadosErrorException = ArcticSpecificException<ErrorCode::E_UNEXPECTED_RADOS_ERROR>;
++using RadosRetryableException = ArcticSpecificException<ErrorCode::E_RADOS_RETRYABLE>;
+ using NonIncreasingIndexVersionException = ArcticSpecificException<ErrorCode::E_NON_INCREASING_INDEX_VERSION>;
+ using SortingException = ArcticCategorizedException<ErrorCategory::SORTING>;
+ using UnsortedDataException = ArcticSpecificException<ErrorCode::E_UNSORTED_DATA>;
+@@ -261,6 +265,16 @@ template<>
+     throw ArcticSpecificException<ErrorCode::E_MONGO_RETRYABLE>(msg);
+ }
+ 
++template<>
++[[noreturn]] inline void throw_error<ErrorCode::E_UNEXPECTED_RADOS_ERROR>(const std::string& msg) {
++    throw ArcticSpecificException<ErrorCode::E_UNEXPECTED_RADOS_ERROR>(msg);
++}
++
++template<>
++[[noreturn]] inline void throw_error<ErrorCode::E_RADOS_RETRYABLE>(const std::string& msg) {
++    throw ArcticSpecificException<ErrorCode::E_RADOS_RETRYABLE>(msg);
++}
++
+ template<>
+ [[noreturn]] inline void throw_error<ErrorCode::E_NON_INCREASING_INDEX_VERSION>(const std::string& msg) {
+     throw ArcticSpecificException<ErrorCode::E_NON_INCREASING_INDEX_VERSION>(msg);

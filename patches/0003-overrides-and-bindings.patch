@@ -1,0 +1,80 @@
+diff --git a/cpp/arcticdb/storage/library_manager.cpp b/cpp/arcticdb/storage/library_manager.cpp
+index b69c047..3140a71 100644
+--- a/cpp/arcticdb/storage/library_manager.cpp
++++ b/cpp/arcticdb/storage/library_manager.cpp
+@@ -43,6 +43,7 @@ void apply_storage_override(
+             StorageVisitor<GCPXMLOverride>{lib_cfg_proto, override_https},
+             StorageVisitor<AzureOverride>{lib_cfg_proto, override_https},
+             StorageVisitor<LmdbOverride>{lib_cfg_proto, override_https},
++            StorageVisitor<RadosOverride>{lib_cfg_proto, override_https},
+             [](const std::monostate&) {}
+     );
+ }
+@@ -63,6 +64,7 @@ bool is_storage_config_ok(
+         storage.config().UnpackTo(&azure_storage);
+         is_ok = azure_storage.endpoint().empty();
+     }
++    is_ok = is_ok && is_rados_config_ok(storage);
+ 
+     if (is_ok) {
+         return true;
+diff --git a/cpp/arcticdb/storage/python_bindings.cpp b/cpp/arcticdb/storage/python_bindings.cpp
+index c8ede3e..ded6339 100644
+--- a/cpp/arcticdb/storage/python_bindings.cpp
++++ b/cpp/arcticdb/storage/python_bindings.cpp
+@@ -19,6 +19,7 @@
+ #include <arcticdb/storage/constants.hpp>
+ #include <arcticdb/storage/s3/s3_settings.hpp>
+ #include <arcticdb/storage/python_bindings_common.hpp>
++#include <arcticdb/storage/rados/rados_python_bindings.hpp>
+ 
+ namespace py = pybind11;
+ 
+@@ -100,12 +101,15 @@ void register_bindings(py::module& storage, py::exception<arcticdb::ArcticExcept
+             .def_property("path", &LmdbOverride::path, &LmdbOverride::set_path)
+             .def_property("map_size", &LmdbOverride::map_size, &LmdbOverride::set_map_size);
+ 
++    register_rados_bindings(storage);
++
+     py::class_<StorageOverride>(storage, "StorageOverride")
+             .def(py::init<>())
+             .def("set_s3_override", &StorageOverride::set_s3_override)
+             .def("set_azure_override", &StorageOverride::set_azure_override)
+             .def("set_lmdb_override", &StorageOverride::set_lmdb_override)
+-            .def("set_gcpxml_override", &StorageOverride::set_gcpxml_override);
++            .def("set_gcpxml_override", &StorageOverride::set_gcpxml_override)
++            .def("set_rados_override", &StorageOverride::set_rados_override);
+ 
+     py::class_<LibraryManager::LibraryWithConfig>(storage, "LibraryWithConfig")
+             .def_property_readonly(
+diff --git a/cpp/arcticdb/storage/storage_override.hpp b/cpp/arcticdb/storage/storage_override.hpp
+index c6bc5ad..fd1edb0 100644
+--- a/cpp/arcticdb/storage/storage_override.hpp
++++ b/cpp/arcticdb/storage/storage_override.hpp
+@@ -5,6 +5,7 @@
+ 
+ #include <arcticdb/entity/protobufs.hpp>
+ #include <arcticdb/util/pb_util.hpp>
++#include <arcticdb/storage/rados/rados_override.hpp>
+ 
+ namespace arcticdb::storage {
+ 
+@@ -158,7 +159,8 @@ class LmdbOverride {
+     }
+ };
+ 
+-using VariantStorageOverride = std::variant<std::monostate, S3Override, AzureOverride, LmdbOverride, GCPXMLOverride>;
++using VariantStorageOverride =
++        std::variant<std::monostate, S3Override, AzureOverride, LmdbOverride, GCPXMLOverride, RadosOverride>;
+ 
+ class StorageOverride {
+     VariantStorageOverride override_;
+@@ -173,6 +175,8 @@ class StorageOverride {
+     void set_lmdb_override(const LmdbOverride& storage_override) { override_ = storage_override; }
+ 
+     void set_gcpxml_override(const GCPXMLOverride& storage_override) { override_ = storage_override; }
++
++    void set_rados_override(const RadosOverride& storage_override) { override_ = storage_override; }
+ };
+ 
+ } // namespace arcticdb::storage
